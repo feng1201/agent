@@ -2,7 +2,7 @@ from typing import Dict, List
 
 from models import ModelWrapper
 from prompts import build_agent_messages_single_agent
-from utils import extract_gsm8k_answer, normalize_answer, extract_markdown_python_block, run_with_timeout
+from utils import extract_gsm8k_answer, normalize_answer, extract_markdown_python_block, run_with_timeout, extract_mcq_choice
 
 
 class BaselineMethod:
@@ -88,7 +88,10 @@ class BaselineMethod:
                     error_msg = f'Value error in parsing answer. Pred: {pred}, Gold: {gold}'
 
             else:
-                pred = normalize_answer(extract_gsm8k_answer(generated_text))
+                if self.task in ["medqa", "arc_easy", "arc_challenge"]:
+                    pred = normalize_answer(extract_mcq_choice(generated_text))
+                else:
+                    pred = normalize_answer(extract_gsm8k_answer(generated_text))
                 gold = item.get("gold", "")
                 ok = (pred == gold) if (pred and gold) else False
                 error_msg = None

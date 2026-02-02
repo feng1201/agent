@@ -1,0 +1,19 @@
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Jupyter / misc
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+
+# Logs / outputs
+*.log
+
+# Local-only launch files (we keep .vscode/launch.json in repo)
+launch.json
+
+

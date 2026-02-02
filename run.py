@@ -82,14 +82,25 @@ def process_batch(
 
 
 def main():
+    # ==========================
+    # DEBUG BREAKPOINT SUGGESTION
+    # 1) 在这里打断点：确认 argparse 解析前后的默认值/命令行参数是否符合预期。
+    #    重点看：args.use_vllm / args.tensor_parallel_size / args.device / args.device2
+    # ==========================
     parser = argparse.ArgumentParser()
 
     # core args for experiments
     parser.add_argument("--method", choices=["baseline", "text_mas", "latent_mas"], required=True,
                         help="Which multi-agent method to run: 'baseline', 'text_mas', or 'latent_mas'.")
-    parser.add_argument("--model_name", type=str, required=True,
-                        choices=["Qwen/Qwen3-4B", "Qwen/Qwen3-4B", "Qwen/Qwen3-14B"],
-                        help="Model choices to use for experiments (e.g. 'Qwen/Qwen3-14B').")
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        required=True,
+        help=(
+            "HF model id or local model path. "
+            "Examples: 'Qwen/Qwen3-14B' or '/path/to/Qwen3-8B'."
+        ),
+    )
     parser.add_argument("--max_samples", type=int, default=-1, help="Number of questions to evaluate; set -1 to use all samples.")
     parser.add_argument("--task", choices=["gsm8k", "aime2024", "aime2025", "gpqa", "arc_easy", "arc_challenge", "mbppplus", 'humanevalplus', 'medqa'], default="gsm8k",
                         help="Dataset/task to evaluate. Controls which loader is used.")
@@ -115,16 +126,47 @@ def main():
     parser.add_argument("--device2", type=str, default="cuda:1")
     parser.add_argument("--tensor_parallel_size", type=int, default=1, help="How many GPUs vLLM should shard the model across")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="Target GPU memory utilization for vLLM")
+    parser.add_argument(
+        "--vllm_max_num_seqs",
+        type=int,
+        default=16,
+        help="vLLM max_num_seqs (concurrency). Lower this if vLLM OOMs during warmup.",
+    )
+    parser.add_argument(
+        "--vllm_max_model_len",
+        type=int,
+        default=4096,
+        help="vLLM max_model_len. Lower this for small tasks to save KV cache memory.",
+    )
+    parser.add_argument(
+        "--vllm_enforce_eager",
+        action="store_true",
+        help="Set vLLM enforce_eager=True to reduce compilation/cudagraph overhead (often helps memory).",
+    )
 
     args = parser.parse_args()
     
     if args.method == "latent_mas" and args.use_vllm:
         args.use_second_HF_model = True 
         args.enable_prefix_caching = True
+
+    # ==========================
+    # DEBUG BREAKPOINT SUGGESTION
+    # 2) 在这里打断点：检查 latent_mas+vLLM 时被强制打开的开关是否生效：
+    #    args.use_second_HF_model / args.enable_prefix_caching
+    # ==========================
     
     set_seed(args.seed)
     device = auto_device(args.device)
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
+
+    # ==========================
+    # DEBUG BREAKPOINT SUGGESTION
+    # 3) 在这里打断点：ModelWrapper 初始化完成后检查：
+    #    - model.use_vllm 是否为 True
+    #    - model.vllm_engine 是否非空（vLLM 路径）
+    #    - model.HF_model / model.embedding_layer 是否存在（latent_mas+vLLM 的 HF 辅助模型）
+    # ==========================
     
     start_time = time.time()
 
@@ -160,6 +202,13 @@ def main():
             generate_bs=args.generate_bs, 
             args=args,
         )
+
+    # ==========================
+    # DEBUG BREAKPOINT SUGGESTION
+    # 4) 在这里打断点：确认 method 类型与关键参数
+    #    - method.agents 的顺序与数量（Planner/Critic/Refiner/Judger）
+    #    - latent_steps / max_new_tokens / generate_bs
+    # ==========================
 
     preds: List[Dict] = []
     processed = 0

@@ -1,6 +1,20 @@
-transformers
+#
+# Minimal requirements for running LatentMAS (HF backend) and LatentMAS with vLLM.
+# Note: On GPU clusters, torch/vllm wheels are CUDA-version dependent. If installation
+# fails on your machine, install a compatible torch first, then install the rest.
+#
+transformers>=4.56.0,<5
 torch
 numpy
 tqdm
 accelerate
 datasets
+
+# vLLM backend (required when using --use_vllm)
+vllm
+
+# optional: debugger (useful for step-by-step understanding)
+debugpy
+
+# some tokenizers/models require sentencepiece
+sentencepiece
