@@ -88,6 +88,138 @@ class LatentMASMethod:
         return tuple(trimmed_layers)
 
     @torch.no_grad()
+    def build_judger_context(self, items: List[Dict]) -> Dict[str, object]:
+        """
+        为 GRPO/RL 训练准备 Judger 的“解码上下文”：
+
+        - 先按 LatentMAS 流程让所有非 Judger agent 做 latent rollout，累积/裁剪 `past_kv`
+        - 再构造 Judger 的 prompt token（`judger_ids/judger_mask`）
+        - **不做最终文本解码**（训练脚本会在此上下文上采样 K 次答案，并用 teacher-forcing 算 logprob）
+
+        返回字段（均为 batch 级）：
+        - past_key_values: Optional[Tuple]  # LatentMAS 隐空间记忆（可能为 None，若 latent_steps==0）
+        - judger_prompts: List[str]
+        - judger_ids: torch.Tensor [B, L]
+        - judger_mask: torch.Tensor [B, L]
+        """
+        if len(items) > self.generate_bs:
+            raise ValueError("Batch size exceeds configured generate_bs")
+
+        batch_size = len(items)
+        past_kv: Optional[Tuple] = None
+
+        # 1) 非 Judger agent：latent rollout -> past_kv
+        for agent in self.agents:
+            if agent.role == "judger":
+                break
+
+            if self.args.prompt == "sequential":
+                batch_messages = [
+                    build_agent_message_sequential_latent_mas(
+                        role=agent.role,
+                        question=item["question"],
+                        context="",
+                        method=self.method_name,
+                        args=self.args,
+                    )
+                    for item in items
+                ]
+            else:
+                batch_messages = [
+                    build_agent_message_hierarchical_latent_mas(
+                        role=agent.role,
+                        question=item["question"],
+                        context="",
+                        method=self.method_name,
+                        args=self.args,
+                    )
+                    for item in items
+                ]
+
+            prompts, _, _, _ = self.model.prepare_chat_batch(batch_messages, add_generation_prompt=True)
+
+            prev_past_len = _past_length(past_kv)
+            if self.args.think:
+                wrapped_prompts = [f"{p}<think>" for p in prompts]
+            else:
+                wrapped_prompts = prompts
+
+            wrapped_encoded = self.model.tokenizer(
+                wrapped_prompts,
+                return_tensors="pt",
+                padding=True,
+                add_special_tokens=False,
+            )
+            wrapped_ids = wrapped_encoded["input_ids"].to(self.model.device)
+            wrapped_mask = wrapped_encoded["attention_mask"].to(self.model.device)
+
+            past_kv = self.model.generate_latent_batch(
+                wrapped_ids,
+                attention_mask=wrapped_mask,
+                latent_steps=self.latent_steps,
+                past_key_values=past_kv,
+            )
+
+            if self.sequential_info_only or self.latent_only:
+                new_past_len = _past_length(past_kv)
+                tokens_added = new_past_len - prev_past_len
+                tokens_to_keep = self.latent_steps if self.latent_only else tokens_added
+                past_kv = self._truncate_past(past_kv, tokens_to_keep)
+
+        # 2) Judger prompt tokenization（带上可选 <think>，并保留与 run_batch 一致的处理）
+        judger_agent = None
+        for a in self.agents:
+            if a.role == "judger":
+                judger_agent = a
+                break
+        if judger_agent is None:
+            raise RuntimeError("No judger agent found in default_agents().")
+
+        if self.args.prompt == "sequential":
+            judger_messages = [
+                build_agent_message_sequential_latent_mas(
+                    role=judger_agent.role,
+                    question=item["question"],
+                    context="",
+                    method=self.method_name,
+                    args=self.args,
+                )
+                for item in items
+            ]
+        else:
+            judger_messages = [
+                build_agent_message_hierarchical_latent_mas(
+                    role=judger_agent.role,
+                    question=item["question"],
+                    context="",
+                    method=self.method_name,
+                    args=self.args,
+                )
+                for item in items
+            ]
+
+        judger_prompts, _, _, _ = self.model.prepare_chat_batch(judger_messages, add_generation_prompt=True)
+        if self.args.think:
+            judger_prompts = [f"{p}<think>" for p in judger_prompts]
+
+        judger_encoded = self.model.tokenizer(
+            judger_prompts,
+            return_tensors="pt",
+            padding=True,
+            add_special_tokens=False,
+        )
+        judger_ids = judger_encoded["input_ids"].to(self.model.device)
+        judger_mask = judger_encoded["attention_mask"].to(self.model.device)
+
+        past_for_decoding = past_kv if self.latent_steps > 0 else None
+        return {
+            "past_key_values": past_for_decoding,
+            "judger_prompts": judger_prompts,
+            "judger_ids": judger_ids,
+            "judger_mask": judger_mask,
+        }
+
+    @torch.no_grad()
     def run_batch(self, items: List[Dict]) -> List[Dict]:
         if len(items) > self.generate_bs:
             raise ValueError("Batch size exceeds configured generate_bs")
