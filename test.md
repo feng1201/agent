@@ -78,8 +78,29 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 /finance_ML/fengninghui/conda_envs/latentma
   --max_new_tokens 1024 \
   --group_size 8 \
   --tf_sequential \
-  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_agent1_mp8_v2
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_agent1_mp8_v3
 s
+
+# 多 agent（Planner/Critic/Refiner/Judger）GRPO + 可选“按角色 LoRA”微调
+# - 通过 `--train_lora_roles` 选择要训练的角色（例如 planner,refiner）
+# - Judger 阶段会 disable_adapter()，保证 Judger 不直接使用 LoRA
+#
+# 2卡 debug 推荐（更快）：小 latent_steps / 小 group_size / 小 train_steps
+CUDA_VISIBLE_DEVICES=0,1 /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  /finance_ML/fengninghui/LatentMAS/train_grpo_multiagent.py \
+  --model_name /finance_ML/fengninghui/TSbasemodel/Qwen38btext \
+  --task medqa \
+  --prompt sequential \
+  --device cuda:0 \
+  --device_map auto \
+  --latent_steps 2 \
+  --train_steps 2 \
+  --max_train_samples 2 \
+  --max_new_tokens 128 \
+  --group_size 2 \
+  --tf_sequential \
+  --train_lora_roles planner,refiner \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg
 
 下面是评估脚本
 1) 只评估 base（不加 LoRA）
@@ -153,11 +174,162 @@ bash scripts/eval_lora_medqa_8gpu.sh
 cd /finance_ML/fengninghui/LatentMAS
 LORA_PATH=/finance_ML/fengninghui/LatentMAS/outputs/your_new_lora/final bash scripts/eval_lora_medqa_8gpu_v2.sh
 
+#8卡4个LLM
 
-./scripts/upload_one_file_github_pat.sh \
- --repo feng1201/agent \
- --local /finance_ML/fengninghui/LatentMAS/test.md \
- --remote test.md \
- --branch main \
- --message "Update test.md "
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  /finance_ML/fengninghui/LatentMAS/train_grpo_multiagent.py \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa_like_train_500.json \
+  --prompt sequential \
+  --device cuda:0 \
+  --device_map auto \
+  --latent_steps 40 \
+  --train_steps 100 \
+  --max_train_samples 150 \
+  --max_new_tokens 2048 \
+  --group_size 8 \
+  --tf_sequential \
+  --train_lora_roles planner,refiner \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg_v2
 
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  /finance_ML/fengninghui/LatentMAS/train_grpo_multiagent.py \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa_like_train_500.json \
+  --prompt sequential \
+  --device cuda:0 \
+  --device_map auto \
+  --latent_steps 20 \
+  --train_steps 70 \
+  --max_train_samples 150 \
+  --max_new_tokens 2048 \
+  --group_size 8 \
+  --tf_sequential \
+  --train_lora_roles planner,refiner \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg_v2
+
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  /finance_ML/fengninghui/LatentMAS/train_grpo_multiagent.py \
+  --model_name /finance_ML/fengninghui/TSbasemodel/Qwen38btext \
+  --task medqa \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa_like_train_500.json \
+  --prompt sequential \
+  --device cuda:0 \
+  --device_map auto \
+  --latent_steps 20 \
+  --train_steps 40 \
+  --max_train_samples 150 \
+  --max_new_tokens 2048 \
+  --group_size 4 \
+  --tf_sequential \
+  --per_sample_seed \
+  --train_lora_roles planner,critic,refiner \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg_v4_123lora_qwen38b
+
+dapo运行
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  /finance_ML/fengninghui/LatentMAS/train_dapo_multiagent.py \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa_like_train_500.json \
+  --prompt sequential \
+  --device cuda:0 \
+  --device_map auto \
+  --agent_roles planner,critic,refiner,judger \
+  --train_lora_roles planner,refiner \
+  --latent_steps 20 \
+  --max_new_tokens 2048 \
+  --group_size 4 \
+  --max_group_size 6 \
+  --temperature 0.6 --top_p 0.95 --top_k 0 \
+  --dapo_epochs 3 \
+  --clip_eps_pos 0.2 --clip_eps_neg 0.2 \
+  --per_sample_seed \
+  --train_steps 40 \
+  --max_train_samples 40 \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/lora_dapo_multiagent_dbg_v2
+
+
+
+# 8卡评估：对比 multi-agent base vs (planner/refiner) LoRA
+# 先设置 LORA_PATH 指向训练输出（final 下应有子目录 planner/ refiner/ ...）
+# 例如：LORA_PATH=/finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg/final
+cd /finance_ML/fengninghui/LatentMAS
+bash scripts/eval_multiagent_compare_medqa_8gpu.sh
+
+或者
+cd /finance_ML/fengninghui/LatentMAS
+export LORA_PATH=/finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg/final
+bash scripts/eval_multiagent_compare_medqa_8gpu.sh
+
+下面是这个8卡脚本的超参数
+
+MODEL_NAME：基座模型路径
+DATA_FILE：评估数据路径（默认 /finance_ML/fengninghui/LatentMAS/data/medqa.json）
+MAX_SAMPLES：评估条数（越大越慢）
+LATENT_STEPS：latent rollout 步数
+MAX_NEW_TOKENS：Judger 最大生成长度
+TEMPERATURE / TOP_P：评估建议 TEMPERATURE=0 TOP_P=1.0（确定性）
+PROMPT：sequential / hierarchical
+AGENT_ROLES：默认 planner,critic,refiner,judger（就是“原文 4 agent”）
+LORA_ROLES：哪些角色启用 LoRA（默认 planner,refiner）
+OUTPUT_DIR：输出目录
+
+如果是8卡跑lora only
+cd /finance_ML/fengninghui/LatentMAS
+bash scripts/eval_lora_sharded.sh \
+  --python /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  --eval_py eval_multiagent_lora.py \
+  --mode single --tag base \
+  --num_shards 8 \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/eval_multiagent_base_sharded_qwen34b \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa --split test \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa.json \
+  --prompt sequential \
+  --agent_roles planner,critic,refiner,judger \
+  --latent_steps 20 \
+  --max_new_tokens 2048 \
+  --temperature 0.6 --top_p 0.95 \
+  --max_samples 200
+
+同一套超参数下跑 LoRA（multi-agent，指定 LoRA 路径与启用角色）：
+cd /finance_ML/fengninghui/LatentMAS
+bash scripts/eval_lora_sharded.sh \
+  --python /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  --eval_py eval_multiagent_lora.py \
+  --mode single --tag lora \
+  --num_shards 8 \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/eval_multiagent_lora_sharded_qwen34b \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa --split test \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa.json \
+  --prompt sequential \
+  --agent_roles planner,critic,refiner,judger \
+  --latent_steps 20 \
+  --max_new_tokens 2048 \
+  --temperature 0.6 --top_p 0.95 \
+  --max_samples 200 \
+  --lora_path /finance_ML/fengninghui/LatentMAS/outputs/lora_grpo_multiagent_dbg_v3/final \
+  --lora_roles planner,refiner
+
+bash scripts/eval_lora_sharded.sh \
+  --python /finance_ML/fengninghui/conda_envs/latentmas_vllm_py310/bin/python \
+  --eval_py eval_multiagent_lora.py \
+  --mode single --tag lora \
+  --num_shards 8 \
+  --output_dir /finance_ML/fengninghui/LatentMAS/outputs/eval_multiagent_lora_sharded_qwen34b_dapo \
+  --model_name /finance_ML/fengninghui/TSbasemodel/qwen34b \
+  --task medqa --split test \
+  --data_file /finance_ML/fengninghui/LatentMAS/data/medqa.json \
+  --prompt sequential \
+  --agent_roles planner,critic,refiner,judger \
+  --latent_steps 20 \
+  --max_new_tokens 2048 \
+  --temperature 0.6 --top_p 0.95 \
+  --max_samples 200 \
+  --lora_path /finance_ML/fengninghui/LatentMAS/outputs/lora_dapo_multiagent_dbg/final \
+  --lora_roles planner,refiner
